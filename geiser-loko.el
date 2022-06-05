@@ -87,21 +87,6 @@
                     (file-name-directory load-file-name))
   "Directory where the Loko Scheme Geiser modules are installed.")
 
-(defun geiser-loko--add-library-path (impl)
-  "Update the Loko library path if IMPL is \"loko\".
-
-Adds `geiser-loko-scheme-dir' to the LOKO_LIBRARY_PATH environment variable
-unless it is already in there."
-  (when (eq impl 'loko)
-    (let ((loko-library-path (getenv "LOKO_LIBRARY_PATH")))
-      (cond ((not loko-library-path)
-             (setenv "LOKO_LIBRARY_PATH" geiser-loko-scheme-dir))
-            ((not (cl-search geiser-loko-scheme-dir loko-library-path))
-             (setenv "LOKO_LIBRARY_PATH"
-                     (concat loko-library-path
-                             ":"
-                             geiser-loko-scheme-dir)))))))
-
 (defun geiser-loko--binary nil
   "Return the runnable Loko Scheme binary name without path."
   (if (listp geiser-loko-binary)
@@ -166,9 +151,12 @@ unless it is already in there."
   (let ((geiser-log-verbose-p t))
     (compilation-setup t)
     (geiser-eval--send/wait
-     "(begin (import (geiser-loko))
+     (concat "(begin (load "
+             (expand-file-name "geiser-loko.sls" geiser-loko-scheme-dir)
+             ")
+(import (geiser-loko))
 (write `((result) (output . \"\")))
-(newline))")))
+(newline))"))))
 
 
 ;;; Error display:
@@ -275,9 +263,6 @@ unless it is already in there."
 ;;;###autoload
 (autoload 'switch-to-loko "geiser-loko"
   "Start a Geiser Loko Scheme REPL, or switch to a running one." t)
-
-;;;###autoload
-(advice-add 'run-geiser :before #'geiser-loko--add-library-path)
 
 
 (provide 'geiser-loko)
