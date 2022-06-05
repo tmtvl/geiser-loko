@@ -87,22 +87,20 @@
                     (file-name-directory load-file-name))
   "Directory where the Loko Scheme Geiser modules are installed.")
 
-(defun geiser-loko--add-library-path (run-geiser impl)
-  "Call RUN-GEISER and update the Loko library path if IMPL is \"loko\".
+(defun geiser-loko--add-library-path (impl)
+  "Update the Loko library path if IMPL is \"loko\".
 
 Adds `geiser-loko-scheme-dir' to the LOKO_LIBRARY_PATH environment variable
 unless it is already in there."
-  (if (eq impl 'loko)
-      (let ((loko-library-path (or (getenv "LOKO_LIBRARY_PATH")
-                                   "")))
-        (if (cl-search geiser-loko-scheme-dir loko-library-path)
-            (funcall #'run-geiser impl)
-          (with-environment-variables (("LOKO_LIBRARY_PATH"
-                                        (concat loko-library-path
-                                                ":"
-                                                geiser-loko-scheme-dir)))
-            (funcall #'run-geiser impl))))
-    (funcall #'run-geiser impl)))
+  (when (eq impl 'loko)
+    (let ((loko-library-path (getenv "LOKO_LIBRARY_PATH")))
+      (cond ((not loko-library-path)
+             (setenv "LOKO_LIBRARY_PATH" geiser-loko-scheme-dir))
+            ((not (cl-search geiser-loko-scheme-dir loko-library-path))
+             (setenv "LOKO_LIBRARY_PATH"
+                     (concat loko-library-path
+                             ":"
+                             geiser-loko-scheme-dir)))))))
 
 (defun geiser-loko--binary nil
   "Return the runnable Loko Scheme binary name without path."
@@ -279,7 +277,7 @@ unless it is already in there."
   "Start a Geiser Loko Scheme REPL, or switch to a running one." t)
 
 ;;;###autoload
-(advice-add 'run-geiser :around #'geiser-loko--add-library-path)
+(advice-add 'run-geiser :before #'geiser-loko--add-library-path)
 
 
 (provide 'geiser-loko)
