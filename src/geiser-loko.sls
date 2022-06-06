@@ -28,10 +28,10 @@
   ;; TODO get the environment of the provided module.
   (define (geiser:eval module form . rest)
     rest
-    (let ((output (open-output-string))
-          (result (parameterize ((current-output-port* output))
-                    (eval form
-                          (interaction-environment)))))
+    (let* ((output (open-output-string))
+           (result (parameterize ((current-output-port* output))
+                     (eval form
+                           (interaction-environment)))))
       (write
        `((result ,(write-to-string result))
          (output . ,(get-output-string output))))
