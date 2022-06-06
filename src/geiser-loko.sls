@@ -38,6 +38,16 @@
       (newline)
       (close-output-port output)))
 
+  (define string-prefix?
+    (lambda (x y)
+      (let ((n (string-length x)))
+        (and (fx<=? n (string-length y))
+             (let prefix? ((i 0))
+               (or (fx=? i n)
+                   (and (char=? (string-ref x i)
+                                (string-ref y i))
+                        (prefix? (fx+ i 1)))))))))
+
   (define (geiser:completions prefix . rest)
     rest
     (list-sort string-ci<?
@@ -48,9 +58,23 @@
 
   (define (geiser:module-completions prefix . rest)
     rest
-    (filter (lambda (pstring)
-              (substring? prefix el))
-            (map write-to-string (installed-libraries))))
+    (letrec ((substring? (lambda (s1 s2)
+                           (let ((n1 (string-length s1))
+                                 (n2 (string-length s2)))
+                             (let loop2 ((i2 0))
+                               (let loop1 ((i1 0)
+                                           (j i2))
+                                 (if (fx=? i1 n1)
+                                     i2
+                                     (and (not (fx=? j n2))
+                                          (if (char=? (string-ref s1 i1)
+                                                      (string-ref s2 j))
+                                              (loop1 (fx+ i1 1)
+                                                     (fx+ j 1))
+                                              (loop2 (fx+ i2 1)))))))))))
+      (filter (lambda (pstring)
+                (substring? prefix pstring))
+              (map write-to-string (installed-libraries)))))
 
   (define (operator-arglist operator)
     ;; TODO find out whether $procedure-info can be used for the arglist.
