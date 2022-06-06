@@ -119,6 +119,7 @@
 (defun geiser-loko--version (binary)
   "Return the version the installed Loko Scheme BINARY."
   (car (process-lines binary
+                      "--program"
                       (expand-file-name "loko-version.sls"
                                         geiser-loko-scheme-dir))))
 
@@ -130,11 +131,11 @@
     (compilation-setup t)
     (geiser-eval--send/wait
      (format "(load %S)
-(import geiser-loko)"
+(import (geiser-loko))"
              (expand-file-name "geiser-loko.sls" geiser-loko-scheme-dir)))
     (when-let ((init-file (and (stringp geiser-loko-init-file)
                                (expand-file-name geiser-loko-init-file))))
-      (if (file-exists-p)
+      (if (file-exists-p init-file)
           (geiser-eval--send/wait
            (format "(load %S)" init-file))
         (geiser-log--warn "File %s does not exist, so it's not loaded."
