@@ -63,9 +63,19 @@
   :type '(repeat string)
   :group 'geiser-loko)
 
+(geiser-custom--defcustom geiser-loko-case-sensitive-p t
+  "Non-nil means keyword highlighting is case-sensitive."
+  :type 'boolean
+  :group 'geiser-loko)
+
 (geiser-custom--defcustom geiser-loko-extra-keywords nil
   "Extra keywords highlighted in Loko Scheme buffers."
   :type '(repeat string)
+  :group 'geiser-loko)
+
+(geiser-custom--defcustom geiser-loko-init-file "~/.loko-geiser"
+  "Initialisation file with user code for the Loko REPL."
+  :type 'string
   :group 'geiser-loko)
 
 (geiser-custom--defcustom geiser-loko-manual-lookup-nodes
@@ -82,11 +92,6 @@
 
 ;;; REPL support:
 
-(defvar geiser-loko-scheme-dir
-  (expand-file-name geiser-loko-source-directory
-                    (file-name-directory load-file-name))
-  "Directory where the Loko Scheme Geiser modules are installed.")
-
 (defun geiser-loko--binary nil
   "Return the runnable Loko Scheme binary name without path."
   (if (listp geiser-loko-binary)
@@ -95,29 +100,92 @@
 
 (defun geiser-loko--parameters nil
   "Return a list with all parameters needed to start Loko Scheme."
-  geiser-loko-extra-command-line-parameters)
+  (append geiser-loko-extra-command-line-parameters
+          (and (listp geiser-loko-binary)
+               (cdr geiser-loko-binary))))
 
 (defconst geiser-loko--prompt-regexp "> ")
+
+(defconst geiser-loko--debugger-prompt-regexp nil)
+
+
+;;; REPL startup:
+
+(defvar geiser-loko-scheme-dir
+  (expand-file-name "src"
+                    (file-name-directory load-file-name))
+  "Directory where the Loko Scheme Geiser modules are installed.")
+
+(defun geiser-loko--version (binary)
+  "Return the version the installed Loko Scheme BINARY."
+  (car (process-lines binary
+                      (expand-file-name "loko-version.sls"
+                                        geiser-loko-scheme-dir))))
+
+(defconst geiser-loko-minimum-version "0.11.0")
+
+(defun geiser-loko--startup (_remote)
+  "Initialise a Loko Scheme REPL."
+  (let ((geiser-log-verbose-p t))
+    (compilation-setup t)
+    (geiser-eval--send/wait
+     (format "(load %S)
+(import geiser-loko)"
+             (expand-file-name "geiser-loko.sls" geiser-loko-scheme-dir)))
+    (when-let ((init-file (and (stringp geiser-loko-init-file)
+                               (expand-file-name geiser-loko-init-file))))
+      (if (file-exists-p)
+          (geiser-eval--send/wait
+           (format "(load %S)" init-file))
+        (geiser-log--warn "File %s does not exist, so it's not loaded."
+                          init-file)))))
 
 
 ;;; Evaluation support:
 
 (defun geiser-loko--geiser-procedure (proc &rest args)
-  "Transform PROC in string for a scheme procedure using ARGS."
+  "Create a string to send to the REPL to execute the Geiser PROC with ARGS."
   (cl-case proc
     ((eval compile)
-     (let ((form (mapconcat 'identity (cdr args) " "))
-           (module (cond ((string-equal "'()" (car args)) "'()")
-                         ((car args) (concat "'" (car args)))
-                         (t "#f"))))
+     (let ((form (mapconcat #'identity
+                            (cdr args)
+                            " "))
+           (module (if (and (car args)
+                            (not (string-equal "'()"
+                                               (car args))))
+                       (concat "'"
+                               (car args))
+                     "#f")))
        (format "(geiser:eval %s '%s)" module form)))
     ((load-file compile-file)
-     (format "(geiser:load-file %s)" (car args)))
+     (format "(geiser:load-file %s)"
+             (car args)))
     ((no-values)
-     "(geiser:no-values)")
+     "(giser:no-values)")
     (t
      (let ((form (mapconcat 'identity args " ")))
        (format "(geiser:%s %s)" proc form)))))
+
+(defun geiser-loko--find-module (&optional module)
+  "Find current module, or normalise MODULE."
+  (cond ((null module)
+         :f)
+        ((listp module)
+         module)
+        ((stringp module)
+         (condition-case nil
+             (car (geiser-syntax--read-from-string module))
+           (error :f)))
+        (t
+         :f)))
+
+(defun geiser-loko--exit-command nil
+  "Return a scheme expression string to exit the REPL."
+  "(exit 0)")
+
+(defun geiser-loko--import-command (module)
+  "Return a scheme expression string to import MODULE."
+  (format "(import %s)" module))
 
 (defun geiser-loko--symbol-begin (module)
   "Return beginning of current symbol while in MODULE."
@@ -126,43 +194,11 @@
            (save-excursion (skip-syntax-backward "^(>") (1- (point))))
     (save-excursion (skip-syntax-backward "^'-()>") (point))))
 
-(defun geiser-loko--import-command (module)
-  "Return string representing a sexp importing MODULE."
-  (format "(import %s)" module))
-
-(defun geiser-loko--exit-command ()
-  "Return string representing a REPL exit sexp."
-  "(exit 0)")
-
-
-;;; REPL startup:
-
-(defconst geiser-loko-minimum-version "0.11.0")
-
-(defun geiser-loko--version (binary)
-  "Run BINARY to obtain Loko Scheme version."
-  (car (process-lines binary
-                      "--program"
-                      (expand-file-name "loko-version.sls"
-                                        geiser-loko-scheme-dir))))
-
-(defun geiser-loko--startup (_remote)
-  "Startup function."
-  (let ((geiser-log-verbose-p t))
-    (compilation-setup t)
-    (geiser-eval--send/wait
-     (concat "(begin (load "
-             (expand-file-name "geiser-loko.sls" geiser-loko-scheme-dir)
-             ")
-(import (geiser-loko))
-(write `((result) (output . \"\")))
-(newline))"))))
-
 
 ;;; Error display:
 
 (defun geiser-loko--display-error (_module key msg)
-  "Display an error found during evaluation with the given KEY and message MSG."
+  "Display the KEY and message MSG of an evaluation error."
   (when (stringp msg)
     (save-excursion (insert msg))
     (geiser-edit--buttonize-files))
@@ -171,13 +207,38 @@
        msg))
 
 
-;;; Buffer implementation guess:
+;;; Manual lookup:
+
+(defun geiser-loko--info-spec (&optional nodes)
+  "Return an info docspec list for NODES."
+  `(("(loko)Index" nil "^[       ]+-+ [^:]+:[    ]*" "\\b")))
+
+(info-lookup-add-help :topic 'symbol
+                      :mode 'geiser-loko-mode
+                      :ignore-case nil
+                      :regexp "[^()`',\"        \n]+"
+                      :doc-spec (geiser-loko--info-spec))
+
+(defun geiser-loko--manual-look-up (id _mod)
+  "Look up ID in the Loko info manual."
+  (let ((info-lookup-other-window-flag
+         geiser-loko-manual-lookup-other-window-p))
+    (info-lookup-symbol (symbol-name id)
+                        'geiser-loko-mode)
+    (when geiser-loko-manual-lookup-other-window-p
+      (switch-to-buffer-other-window "*info*"))
+    (search-forward (format "%s" id)
+                    nil
+                    t)))
+
+
+;;; Recognising Loko buffers:
 
 (defconst geiser-loko--guess-re
   (regexp-opt '("loko" "scheme-script")))
 
-(defun geiser-loko--guess ()
-  "Guess whether the current buffer edits Loko Scheme code or REPL."
+(defun geiser-loko--guess nil
+  "Try to determine whether we're in a Loko Scheme buffer."
   (save-excursion
     (goto-char (point-min))
     (re-search-forward geiser-loko--guess-re nil t)))
@@ -185,49 +246,25 @@
 
 ;;; Keywords and syntax:
 
+(defconst geiser-loko--binding-forms
+  '("let-values"))
+
+(defconst geiser-loko--binding-forms*
+  '("let*-values"))
+
 (defconst geiser-loko--builtin-keywords
   '("call-with-input-file"
     "call-with-output-file"
+    "let-values"
+    "let*-values"
     "with-input-from-file"
-    "with-input-from-string"
-    "with-output-to-file"
-    "with-output-to-string"))
+    "with-output-to-file"))
 
 (defun geiser-loko--keywords nil
   "Return list of Loko-specific keywords."
   (append
    (geiser-syntax--simple-keywords geiser-loko-extra-keywords)
    (geiser-syntax--simple-keywords geiser-loko--builtin-keywords)))
-
-
-;;; Manual lookup:
-
-(defun geiser-loko--info-spec (&optional nodes)
-  "Return an info docspec list for NODES."
-  (let* ((nrx "^[       ]+-+ [^:]+:[    ]*")
-         (drx "\\b")
-         (res (when (Info-find-file "loko" t)
-                `(("(loko)Index" nil ,nrx ,drx)))))
-    (dolist (node (or nodes geiser-loko-manual-lookup-nodes) res)
-      (when (Info-find-file node t)
-        (mapc (lambda (idx)
-                (add-to-list 'res
-                             (list (format "(%s)%s" node idx) nil nrx drx)))
-              '("Module Index" "Class Index" "Variable Index"))))))
-
-(info-lookup-add-help :topic 'symbol :mode 'geiser-loko-mode
-                      :ignore-case nil
-                      :regexp "[^()`',\"        \n]+"
-                      :doc-spec (geiser-loko--info-spec))
-
-(defun geiser-loko--manual-look-up (id _mod)
-  "Look up ID in the Loko Scheme info manual."
-  (let ((info-lookup-other-window-flag
-         geiser-loko-manual-lookup-other-window-p))
-    (info-lookup-symbol (symbol-name id) 'geiser-loko-mode))
-  (when geiser-loko-manual-lookup-other-window-p
-    (switch-to-buffer-other-window "*info*"))
-  (search-forward (format "%s" id) nil t))
 
 
 ;;; Implementation definition:
@@ -239,16 +276,26 @@
   (minimum-version geiser-loko-minimum-version)
   (repl-startup geiser-loko--startup)
   (prompt-regexp geiser-loko--prompt-regexp)
-  (debugger-prompt-regexp nil)
+  (debugger-prompt-regexp geiser-loko--debugger-prompt-regexp)
+  ;; TODO support debugging through use of GDB.
+  ;; (enter-debugger geiser-loko--enter-debugger)
   (marshall-procedure geiser-loko--geiser-procedure)
+  (find-module geiser-loko--find-module)
+  ;; TODO look for a way to enter a specific module.
+  ;; (enter-command geiser-loko--enter-command)
   (exit-command geiser-loko--exit-command)
   (import-command geiser-loko--import-command)
   (find-symbol-begin geiser-loko--symbol-begin)
   (display-error geiser-loko--display-error)
+  (binding-forms geiser-loko--binding-forms)
+  (binding-forms* geiser-loko--binding-forms*)
   (external-help geiser-loko--manual-look-up)
   (check-buffer geiser-loko--guess)
-  (keywords geiser-loko--keywords))
+  (keywords geiser-loko--keywords)
+  (case-sensitive geiser-loko-case-sensitive-p))
 
+(geiser-implementation-extension 'loko "ss")
+(geiser-implementation-extension 'loko "sls")
 (geiser-implementation-extension 'loko "sld")
 
 
