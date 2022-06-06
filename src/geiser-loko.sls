@@ -40,7 +40,7 @@
 
   (define (geiser:completions prefix . rest)
     rest
-    (sort-list string-ci<?
+    (list-sort string-ci<?
                (filter (lambda (el)
                          (string-prefix? prefix el))
                        (map write-to-string
